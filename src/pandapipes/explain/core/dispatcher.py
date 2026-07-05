@@ -55,20 +55,23 @@ def handle(
     error_type = exc_type.__name__
     error_msg = str(exc_value)
 
-    # --- Load relevant curated knowledge ---
-    knowledge = load_relevant(error_type, error_msg)
-
     # --- Extract network stats from traceback locals ---
     net_stats = llm_prompt.extract_net_stats(exc_tb)
+
+    # --- Grab the tail of stdout/warnings captured before the error ---
+    terminal_logs = log_capture.get_recent_output()
+
+    # --- Run deterministic pandapipes diagnostics before asking the LLM ---
+    diagnostics = llm_prompt.extract_diagnostics(exc_tb, error_type, error_msg)
+
+    # --- Load relevant curated knowledge, using diagnostics as retrieval context ---
+    knowledge = load_relevant(error_type, error_msg, context=f"{net_stats}\n{diagnostics}\n{terminal_logs}")
 
     # --- Format the full traceback as readable text (the call chain) ---
     try:
         traceback_text = "".join(_tb.format_tb(exc_tb)).strip()
     except Exception:
         traceback_text = ""
-
-    # --- Grab the tail of stdout captured before the error ---
-    terminal_logs = log_capture.get_recent_output()
 
     # --- Build and send prompt ---
     messages = llm_prompt.build(
@@ -78,6 +81,7 @@ def handle(
         lib_contexts=lib_contexts,
         knowledge=knowledge,
         net_stats=net_stats,
+        diagnostics=diagnostics,
         terminal_logs=terminal_logs,
         traceback_text=traceback_text,
     )

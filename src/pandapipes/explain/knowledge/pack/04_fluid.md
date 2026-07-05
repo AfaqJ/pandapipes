@@ -10,6 +10,13 @@ frequent cause of non-convergence or unphysical results. Gases are compressible 
 pressure-dependent; liquids (water) are treated as incompressible — choosing the wrong one
 changes the whole solution.
 
+## Source basis
+This pack follows pandapipes fluid-property documentation. A pandapipes network is run
+with a selected fluid from the fluid library or a user-created fluid, and fluid properties
+provide density, viscosity, heat capacity, compressibility, and related values used by
+components during pipeflow. Standard library fluids include water, air, hydrogen, methane,
+high/low calorific gas, and biomethane variants.
+
 ## Cause 1: No fluid defined on the net
 Without a fluid, pipeflow cannot evaluate the friction and continuity terms.
 ```python

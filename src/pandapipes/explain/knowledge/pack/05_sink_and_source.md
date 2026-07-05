@@ -1,13 +1,20 @@
 # Sink and Source Errors
 
 ## Keywords
-sink, source, mdot, mdot_kg_per_s, mass, flow, demand, supply, feed, balance, scaling, sign, negative, withdraw, inject, ext_grid, mass_storage
+sink, source, mdot, mdot_kg_per_s, mass, flow, demand, load, consumer, supply, feed, balance, scaling, sign, negative, withdraw, inject, ext_grid, mass_storage, overload, kg/h
 
 ## What it means
 Sinks and sources set the mass-flow boundary conditions. pandapipes convention:
 a **sink** withdraws fluid (consumer) and a **source** feeds fluid in (producer), both
 declared with a positive `mdot_kg_per_s`. Getting the element or sign wrong unbalances the
 network and can prevent convergence.
+
+## Source basis
+This pack follows pandapipes sink/source component documentation. A sink has a connected
+`junction`, a drawn mass flow `mdot_kg_per_s`, and a non-negative `scaling` factor.
+Positive sink mass flow means flow leaves the network system and is used for hydraulic
+loads. The kg/h conversion examples are unit-sanity guidance: pandapipes expects kg/s,
+so external data in kg/h must be converted before assignment.
 
 ## Cause 1: Mass imbalance — demand without supply
 The total fluid withdrawn by sinks must be supplied by sources, pumps, and/or the ext_grid.
@@ -46,12 +53,21 @@ net.sink['scaling'] = 1.0   # reset to nominal
 ```
 
 ## Cause 5: Wrong magnitude / units
-Mass flow is in **kg/s**, not kg/h or m³/s. A value entered in kg/h (e.g. 3600) is a
-1000×+ overload relative to a realistic kg/s figure.
+Mass flow is in **kg/s**, not kg/h or m³/s. A value entered in kg/h without conversion
+is too large by a factor of 3600.
 ```python
 # Wrong: 3600 kg/h entered directly as mdot_kg_per_s
 # Right: 3600 kg/h ÷ 3600 = 1.0 kg/s
 pp.create_sink(net, junction=j, mdot_kg_per_s=3600/3600)
+```
+
+## Cause 6: Unrealistic sink demand relative to the network
+A sink demand can be numeric and positive but still physically impossible for the pipe
+diameters, lengths, pressure level, and fluid. If the diagnostic says pipeflow converges
+after scaling sinks down, identify the corrupted sink row and reduce/convert that demand
+instead of changing generic solver settings.
+```python
+print(net.sink[["junction", "mdot_kg_per_s", "scaling"]].sort_values("mdot_kg_per_s"))
 ```
 
 ## Quick checklist

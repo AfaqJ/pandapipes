@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import sys
 import threading
+import warnings
 from collections import deque
 from typing import Deque
 
@@ -27,6 +28,7 @@ _lock = threading.Lock()
 
 _installed = False
 _orig_stdout = None
+_orig_showwarning = None
 
 
 class _Tee:
@@ -64,25 +66,33 @@ class _Tee:
 
 
 def install() -> None:
-    """Replace sys.stdout with a capturing tee (stderr is left untouched)."""
-    global _installed, _orig_stdout
+    """Replace sys.stdout with a capturing tee and record Python warnings."""
+    global _installed, _orig_stdout, _orig_showwarning
     if _installed:
         return
     _orig_stdout = sys.stdout
+    _orig_showwarning = warnings.showwarning
     sys.stdout = _Tee(_orig_stdout)
+    warnings.showwarning = _capture_warning
     _installed = True
 
 
 def uninstall() -> None:
     """Restore the original sys.stdout."""
-    global _installed, _orig_stdout
+    global _installed, _orig_stdout, _orig_showwarning
     if not _installed:
         return
     try:
         sys.stdout = _orig_stdout
     except Exception:
         pass
+    try:
+        if _orig_showwarning is not None:
+            warnings.showwarning = _orig_showwarning
+    except Exception:
+        pass
     _orig_stdout = None
+    _orig_showwarning = None
     _installed = False
 
 
@@ -104,3 +114,19 @@ def clear() -> None:
     """Empty the buffer — used between test runs to prevent cross-contamination."""
     with _lock:
         _buffer.clear()
+
+
+def _capture_warning(message, category, filename, lineno, file=None, line=None):
+    """Record warning text while preserving the user's normal warning display."""
+    try:
+        rendered = warnings.formatwarning(message, category, filename, lineno, line).strip()
+        with _lock:
+            _buffer.append(rendered)
+    except Exception:
+        pass
+    try:
+        if _orig_showwarning is not None:
+            return _orig_showwarning(message, category, filename, lineno, file=file, line=line)
+    except Exception:
+        pass
+    return None

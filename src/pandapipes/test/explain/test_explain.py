@@ -20,6 +20,7 @@ import pytest
 import pandapipes as pps
 import pandapipes.explain as ppe
 from pandapipes.explain.core import dispatcher
+from pandapipes.explain.core import log_capture
 from pandapipes.explain.core.config import get_config
 from pandapipes.explain.knowledge.loader import load_relevant
 from pandapipes.explain.llm import client as llm_client
@@ -35,6 +36,28 @@ def _faulty_net():
     pps.create_pipe_from_parameters(net, j1, j2, length_km=0.1, inner_diameter_mm=100)
     pps.create_sink(net, j2, mdot_kg_per_s=0.5)
     return net
+
+
+def _six_junction_gas_net():
+    net = pps.create_empty_network(fluid="lgas")
+    junctions = [
+        pps.create_junction(net, pn_bar=1.05, tfluid_k=293.15, height_m=0)
+        for _ in range(6)
+    ]
+    pps.create_ext_grid(net, junction=junctions[0], p_bar=1.1, t_k=293.15)
+    for from_j, to_j in zip(junctions[:-1], junctions[1:]):
+        pps.create_pipe_from_parameters(
+            net, from_j, to_j, length_km=0.1, inner_diameter_mm=300, k_mm=0.1
+        )
+    pps.create_sink(net, junction=junctions[-1], mdot_kg_per_s=0.1)
+    return net
+
+
+def _diagnostics_from_net(net):
+    try:
+        raise PipeflowNotConverged("The hydraulic calculation did not converge to a solution.")
+    except PipeflowNotConverged as exc:
+        return llm_prompt.extract_diagnostics(exc.__traceback__, type(exc).__name__, str(exc))
 
 
 @pytest.fixture(autouse=True)
@@ -106,12 +129,52 @@ def test_prompt_builds_and_stays_within_budget():
         lib_contexts=[],
         knowledge=load_relevant(type(exc).__name__, str(exc)),
         net_stats=stats,
+        diagnostics=llm_prompt.extract_diagnostics(tb, type(exc).__name__, str(exc)),
         terminal_logs="",
         traceback_text="",
     )
     assert [m["role"] for m in messages] == ["system", "user"]
     total = sum(len(m["content"]) for m in messages)
     assert total < 20000, f"prompt {total} chars exceeds R6 budget"
+
+
+def test_diagnostics_surface_feedback_cases():
+    cases = []
+
+    net = _six_junction_gas_net()
+    net.junction.loc[3, "height_m"] = 1e6
+    cases.append((net, "net.junction.loc[3, 'height_m'] = 1000000.0"))
+
+    net = _six_junction_gas_net()
+    net.sink.loc[0, "mdot_kg_per_s"] = 10000.0
+    cases.append((net, "net.sink.loc[0, 'mdot_kg_per_s'] = 10000.0"))
+
+    net = _six_junction_gas_net()
+    net.pipe.loc[0, "inner_diameter_mm"] = 0.001
+    cases.append((net, "net.pipe.loc[0, 'inner_diameter_mm'] = 0.001"))
+
+    net = _six_junction_gas_net()
+    net.pipe.loc[0, "to_junction"] = 999
+    cases.append((net, "net.pipe.loc[0, 'to_junction'] = 999"))
+
+    net = _six_junction_gas_net()
+    net.pipe.loc[0, "length_km"] = 10000.0
+    cases.append((net, "net.pipe.loc[0, 'length_km'] = 10000.0"))
+
+    for net, expected in cases:
+        diagnostics = _diagnostics_from_net(net)
+        assert expected in diagnostics
+
+
+def test_warning_capture_includes_matrix_rank_warning():
+    log_capture.clear()
+    log_capture.install()
+    try:
+        import warnings
+        warnings.warn("MatrixRankWarning: Matrix is exactly singular", RuntimeWarning)
+        assert "MatrixRankWarning: Matrix is exactly singular" in log_capture.get_recent_output()
+    finally:
+        log_capture.uninstall()
 
 
 def test_full_pipeline_prints_explanation_with_mocked_ollama(monkeypatch, capsys):

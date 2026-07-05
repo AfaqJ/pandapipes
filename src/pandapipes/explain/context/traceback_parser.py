@@ -87,7 +87,7 @@ def extract_context(
         if path in ("<string>", "<stdin>", "") or path.startswith("<"):
             continue
 
-        is_target = _sep_in_path(target_package, path)
+        is_target = _is_target_package_path(target_package, path)
         is_library = _is_library_path(path, site_paths) or (
             # Editable install: file lives at a repo root, not in site-packages.
             # Classify as library if the path contains a known third-party marker
@@ -107,7 +107,7 @@ def extract_context(
                 lineno=frame.lineno,
                 function_name=frame.name,
                 source_snippet=snippet,
-                is_user_code=not is_library,
+                is_user_code=not (is_library or is_target),
             )
         )
 
@@ -168,6 +168,25 @@ def _sep_in_path(package: str, path: str) -> bool:
     return package in parts
 
 
+def _is_target_package_path(package: str, path: str) -> bool:
+    """
+    Return True only for actual installed/editable package files.
+
+    A checkout directory may itself be named "pandapipes"; that alone must not
+    make every script inside the repo look like pandapipes library code.
+    """
+    parts = path.replace("\\", "/").split("/")
+    for i, part in enumerate(parts):
+        if part != package:
+            continue
+        previous = parts[i - 1] if i else ""
+        if previous in {"src", "site-packages", "dist-packages"}:
+            return True
+        if previous == package and i + 1 < len(parts):
+            return True
+    return False
+
+
 def _is_editable_library(path: str, target_package: str) -> bool:
     """
     Detect editable-install library frames: files that live outside
@@ -184,7 +203,7 @@ def _is_editable_library(path: str, target_package: str) -> bool:
         "numba", "pandapower",
     }
     parts = set(path.replace("\\", "/").split("/"))
-    return bool(parts & _LIBRARY_MARKERS) and not _sep_in_path(target_package, path)
+    return bool(parts & _LIBRARY_MARKERS) and not _is_target_package_path(target_package, path)
 
 
 def _read_context(path: str, lineno: int, n: int) -> str:

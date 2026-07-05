@@ -117,9 +117,10 @@ Every `## Keywords` section that covers a solver failure must include the exact 
 exception class name as it appears in `pandapipes/pf/pipeflow_setup.py`:
 - `PipeflowNotConverged` (raised by `pipeflow()` on hydraulic/heat/bidirectional failure)
 
-Knowledge packs must NOT reference `pp.diagnostic()` — that function does not exist in
-pandapipes. Use `pandapipes.topology.unsupplied_junctions(net)` and the
-`check_connectivity` pipeflow option instead.
+Knowledge packs may reference `pandapipes.diagnostic.diagnostic(net, report=False)`.
+Do not reference pandapower diagnostics or electrical checks. Topology-specific packs may
+also use `pandapipes.topology.unsupplied_junctions(net)` and the `check_connectivity`
+pipeflow option.
 
 Verify exception by running:
 `grep -rn "class.*NotConverged" pandapipes/pf/pipeflow_setup.py`
@@ -172,8 +173,8 @@ the net-stats summary, and the knowledge packs must use pandapipes terminology:
 - [ ] No new mandatory pip dependencies
 - [ ] Total prompt chars stay within the R6 budget
 - [ ] Knowledge pack keywords include `PipeflowNotConverged` where relevant
-- [ ] No knowledge pack references `pp.diagnostic()` (does not exist in pandapipes)
+- [ ] Knowledge pack diagnostics references point to `pandapipes.diagnostic`, not pandapower
 - [ ] `install()` is guarded against double-call
 - [ ] `uninstall()` resets all state
-- [ ] Only stdout (not stderr) is captured
+- [ ] Only stdout and Python warnings (not full stderr tracebacks) are captured
 - [ ] pandapipes components and units only — no leftover pandapower terms

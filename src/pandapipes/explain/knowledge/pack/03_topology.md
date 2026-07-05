@@ -9,8 +9,18 @@ Every junction needs a path to a slack node (`ext_grid`) via in-service pipes, o
 and pumps. An unsupplied junction has no pressure reference and cannot be solved, which
 surfaces as `PipeflowNotConverged`.
 
-## Diagnostic (pandapipes has no `pp.diagnostic()`)
+## Source basis
+This pack follows pandapipes connectivity behavior and component definitions. External
+grids fix pressure and/or temperature at a junction; the documentation states that each
+separate hydraulic grid area needs a fixed pressure value. Pipes connect two junctions,
+and valves can block flow when closed. Missing junction references and unsupplied islands
+are therefore structural model errors, not generic Python bugs.
+
+## Diagnostic
 ```python
+from pandapipes.diagnostic import diagnostic
+print(diagnostic(net, report=False))
+
 import pandapipes.topology as top
 unsupplied = top.unsupplied_junctions(net)   # set of junctions not connected to any slack
 print("Unsupplied junctions:", unsupplied)
@@ -61,6 +71,9 @@ all_j = set(net.junction.index)
 bad = net.pipe[~net.pipe.from_junction.isin(all_j) | ~net.pipe.to_junction.isin(all_j)]
 print("Pipes with missing junction references:", bad)
 ```
+If a diagnostic finding gives a specific reference such as
+`net.pipe.loc[0, "to_junction"] = 999` while junction indices are `0..5`, report that exact
+pipe row as the root cause.
 
 ## Cause 5: No external grid at all
 ```python

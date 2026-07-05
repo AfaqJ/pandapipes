@@ -13,9 +13,25 @@ message is one of:
 This is almost always a network-modelling problem — pandapipes' solver is correct. The
 network is either physically infeasible, missing a boundary condition, or poorly initialised.
 
-## There is no `pp.diagnostic()` in pandapipes
-Unlike pandapower, pandapipes has no `diagnostic()` function. Use these instead:
+## Source basis
+This pack is grounded in pandapipes' documented pipeflow behavior: pipeflow calculates
+junction pressures, pipe velocities, temperatures, and heat transfer, and requires
+boundary conditions. The external grid documentation states that hydraulic calculations
+need at least one fixed pressure value in each separate grid area. The pipe model includes
+pipe length, diameter, roughness/friction, and height difference in pressure-loss
+relationships. The diagnostic thresholds in Explain are preflight red flags, not official
+validity limits.
+
+## Use pandapipes diagnostics before guessing
+`pandapipes.diagnostic.diagnostic(net, report=False)` runs structured checks for invalid
+values, missing junction references, topology/boundary issues, and selected
+non-convergence hypotheses. The Explain feature injects a compact subset of these
+diagnostic results into the LLM prompt; treat those results as stronger evidence than the
+generic `PipeflowNotConverged` message.
 ```python
+from pandapipes.diagnostic import diagnostic
+print(diagnostic(net, report=False))
+
 import pandapipes.topology as top
 top.unsupplied_junctions(net)          # junctions with no path to any ext_grid (slack)
 pp.pipeflow(net, check_connectivity=True)  # default ON: auto-sets unsupplied areas out of service
@@ -70,6 +86,15 @@ Very small/zero pipe diameter, zero length, or mixing units (e.g. metres entered
 makes the hydraulic matrix ill-conditioned.
 ```python
 print(net.pipe[["length_km", "inner_diameter_mm"]])  # length in km, diameter in mm
+```
+
+## Cause 8: Extreme elevations dominate hydrostatic pressure
+`junction.height_m` is a real elevation in metres. A corrupted value such as `1e6` m
+creates an enormous hydrostatic pressure term and can make an otherwise valid network
+non-convergent. If flattening heights makes the pipeflow converge, inspect the corrupted
+junction height rather than changing solver settings.
+```python
+print(net.junction[["height_m"]].sort_values("height_m"))
 ```
 
 ## Quick checklist
