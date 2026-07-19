@@ -76,11 +76,12 @@ def chat(messages: list[dict]) -> str | None:
         method="POST",
     )
 
-    # 60 s timeout — enough for a local 3B model on CPU; prevents 2-minute freezes
-    # if Ollama is hung. Print a status hint so the user knows we're querying.
+    # Timeout is generous (see cfg.request_timeout) so a cold model load on CPU
+    # has time to finish; set it to None to wait indefinitely. Print a status
+    # hint so the user knows we're querying.
     print("\n[pandapipes-explain] Querying Ollama...", file=sys.stderr)
     try:
-        with urllib.request.urlopen(req, timeout=60) as resp:
+        with urllib.request.urlopen(req, timeout=cfg.request_timeout) as resp:
             body = json.load(resp)
             return body["message"]["content"]
     except urllib.error.URLError:

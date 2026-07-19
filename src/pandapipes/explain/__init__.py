@@ -25,6 +25,7 @@ def enable(
     model: str = "llama3.1:8b",
     ollama_host: str = "http://localhost:11434",
     source_context_lines: int = 30,
+    request_timeout: float | None = 300.0,
 ) -> None:
     """
     Install the LLM diagnostic hook globally.
@@ -40,11 +41,15 @@ def enable(
         Base URL of the running Ollama server.
     source_context_lines : int
         Lines of source code to show around the error line.
+    request_timeout : float | None
+        Seconds to wait for the Ollama response. Defaults to 300 s so a cold
+        model load on CPU has time to finish; pass ``None`` to wait forever.
     """
     cfg = get_config()
     cfg.model = model
     cfg.ollama_host = ollama_host
     cfg.source_context_lines = source_context_lines
+    cfg.request_timeout = request_timeout
     intercept.install()
 
 
@@ -58,6 +63,7 @@ def explain(
     model: str = "llama3.1:8b",
     ollama_host: str = "http://localhost:11434",
     source_context_lines: int = 30,
+    request_timeout: float | None = 300.0,
 ):
     """
     Context manager — enable the hook for a specific block of code only.
@@ -71,7 +77,8 @@ def explain(
     with pandapipes.explain.explain():
         pp.pipeflow(net)
     """
-    enable(model=model, ollama_host=ollama_host, source_context_lines=source_context_lines)
+    enable(model=model, ollama_host=ollama_host, source_context_lines=source_context_lines,
+           request_timeout=request_timeout)
     try:
         yield
     except Exception as exc:

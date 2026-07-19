@@ -122,6 +122,26 @@ def _with_circ_pump_mass():
     return net
 
 
+def _closed_loop_const_pressure_net():
+    net = pp.create_empty_network(fluid="water")
+    j0 = pp.create_junction(net, pn_bar=4.0, tfluid_k=343.15, height_m=0)
+    j1 = pp.create_junction(net, pn_bar=4.0, tfluid_k=343.15, height_m=0)
+    j2 = pp.create_junction(net, pn_bar=4.0, tfluid_k=343.15, height_m=0)
+    j3 = pp.create_junction(net, pn_bar=4.0, tfluid_k=343.15, height_m=0)
+    pp.create_circ_pump_const_pressure(
+        net,
+        return_junction=j0,
+        flow_junction=j1,
+        p_flow_bar=4.0,
+        plift_bar=1.5,
+        t_flow_k=343.15,
+    )
+    pp.create_pipe_from_parameters(net, j1, j2, length_km=0.1, inner_diameter_mm=100, k_mm=0.1)
+    pp.create_heat_consumer(net, from_junction=j2, to_junction=j3, qext_w=10000, treturn_k=323.15)
+    pp.create_pipe_from_parameters(net, j3, j0, length_km=0.1, inner_diameter_mm=100, k_mm=0.1)
+    return net
+
+
 SCENARIOS = [
     ("missing_fluid", _no_fluid_net, "no fluid is defined"),
     ("missing_ext_grid", _missing_ext_grid_net, "net.ext_grid is empty"),
@@ -186,3 +206,36 @@ def test_knowledge_injection_includes_specific_sections(name, expected_snippet):
     _, prompt_context = _context_for(scenarios[name]())
     assert "## Diagnostic Checklist" in prompt_context
     assert expected_snippet in prompt_context, name
+
+
+def test_diagnostic_formatter_accepts_numpy_bool_results():
+    formatted = llm_prompt._format_diagnostic_results(
+        {
+            "pipe_diameter": np.bool_(True),
+            "junction_height": np.bool_(True),
+            "heat_transfer_coefficient": np.bool_(False),
+        }
+    )
+
+    assert "  - pipe_diameter: pipeflow converged after increasing very small pipe diameters." in formatted
+    assert "  - junction_height: pipeflow converged after flattening all junction heights to 0 m." in formatted
+    assert not any("heat_transfer_coefficient" in line for line in formatted)
+
+
+def test_inactive_pressure_controls_diagnostic_is_formatted():
+    formatted = llm_prompt._format_diagnostic_results({"inactive_pressure_controls": np.bool_(True)})
+
+    assert formatted == [
+        "  - inactive_pressure_controls: pipeflow converged after all active pressure controls "
+        "were deactivated. The pressure-control configuration is therefore a strong candidate "
+        "for the non-convergence."
+    ]
+
+
+def test_closed_loop_const_pressure_pump_is_not_reported_as_missing_ext_grid():
+    diagnostics, prompt_context = _context_for(_closed_loop_const_pressure_net())
+
+    assert "active circ_pump_const_pressure" in diagnostics
+    assert "net.ext_grid is empty, so there is no pressure reference" not in diagnostics
+    assert "no ext_grid — there is no pressure reference" not in prompt_context
+    assert "Never suggest adding an ext_grid solely because \"Ext grids: 0\"" in prompt_context

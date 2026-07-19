@@ -18,6 +18,10 @@ class ExplainConfig:
         Number of lines above and below the error line to include in context.
     target_package : str
         "pandapipes" or "pandapower" — controls which library frames are captured.
+    request_timeout : float | None
+        Seconds to wait for the Ollama chat response before giving up.
+        Generous by default to survive a cold model load on CPU; set to
+        ``None`` to wait indefinitely.
     enabled : bool
         Internal flag — True when hook is active.
     """
@@ -26,6 +30,7 @@ class ExplainConfig:
     model: str = "llama3.1:8b"
     source_context_lines: int = 50
     target_package: str = "pandapipes"
+    request_timeout: float | None = 300.0
     enabled: bool = False
 
 

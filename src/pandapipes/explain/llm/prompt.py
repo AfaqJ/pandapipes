@@ -34,6 +34,10 @@ You will be given these sections IN ORDER:
 BEFORE WRITING YOUR ANSWER, silently (do not output these steps):
   • Note the exact exception class and message from section 1 — this IS the crash that happened.
   • Treat Diagnostic Findings as stronger evidence than generic solver text.
+  • In a closed-loop heating network, an active circ_pump_const_pressure
+    (net.circ_pump_pressure with in_service=True) provides the pressure reference.
+    In that case, absence of an ext_grid is not itself an error and should not
+    override a specific Diagnostic Finding.
   • Note what the >> line in User Code is actually doing.
   • Note any physically wrong values in Network Statistics (NaN mass flow, no pressure
     reference / ext_grid, missing fluid, bad junction reference, unrealistic elevation,
@@ -54,6 +58,9 @@ OUTPUT FORMAT — write only this, nothing else:
 HARD RULES:
 • Your diagnosis MUST match the exception class in section 1. Do not diagnose a different problem.
 • Never suggest adding an ext_grid if "Ext grids: N" where N ≥ 1 in the stats.
+• Never suggest adding an ext_grid solely because "Ext grids: 0" if Network
+  Statistics or Diagnostic Findings show an active circ_pump_const_pressure /
+  net.circ_pump_pressure. That is normal for closed-loop heating networks.
 • Never suggest a fix you cannot see evidence for in the provided sections.
 • If Diagnostic Findings names a specific table, row, column, and value, mention that
   exact evidence in (b) and fix that exact value in (c).
@@ -161,15 +168,24 @@ def _summarise_net(var_name: str, net) -> str:
     import math
     try:
         fluid = _fluid_name(net)
+        has_circ_pressure_ref = _has_active_circ_pump_pressure(net)
         lines = [f"## Network Statistics (variable: `{var_name}`)"]
         lines.append(f"  Fluid       : {fluid}")
         lines.append(f"  Junctions   : {len(net.junction)}")
         lines.append(f"  Pipes       : {len(net.pipe)}")
         lines.append(f"  Sinks       : {len(net.sink)}")
         lines.append(f"  Sources     : {len(net.source)}")
-        lines.append(f"  Ext grids   : {len(net.ext_grid)}  (pressure/temperature references — slack nodes)")
+        if len(net.ext_grid) == 0 and has_circ_pressure_ref:
+            lines.append(
+                "  Ext grids   : 0  (ok for closed-loop heating because an active "
+                "circ_pump_const_pressure provides the pressure reference)"
+            )
+        else:
+            lines.append(f"  Ext grids   : {len(net.ext_grid)}  (pressure/temperature references — slack nodes)")
         for tbl, label in (("pump", "Pumps"), ("valve", "Valves"),
                            ("press_control", "Pressure controls"),
+                           ("circ_pump_pressure", "Circ pressure pumps"),
+                           ("circ_pump_mass", "Circ mass pumps"),
                            ("heat_exchanger", "Heat exchangers")):
             if tbl in net and not net[tbl].empty:
                 lines.append(f"  {label:<12}: {len(net[tbl])}")
@@ -183,10 +199,15 @@ def _summarise_net(var_name: str, net) -> str:
                 "  *** WARNING: no fluid is defined on the net — pipeflow requires a fluid "
                 "(e.g. create_fluid_from_lib(net, 'water') or pass fluid= to create_empty_network) ***"
             )
-        if len(net.ext_grid) == 0:
+        if len(net.ext_grid) == 0 and not has_circ_pressure_ref:
             warnings.append(
                 "  *** WARNING: no ext_grid — there is no pressure reference (slack node). "
                 "Every network needs at least one ext_grid that fixes a pressure ***"
+            )
+        elif len(net.ext_grid) == 0 and has_circ_pressure_ref:
+            warnings.append(
+                "  *** NOTE: no ext_grid is present, but this closed-loop network has an active "
+                "circ_pump_const_pressure, so do not diagnose missing ext_grid without stronger evidence ***"
             )
         for tbl in ("sink", "source"):
             df = net[tbl] if tbl in net else None
@@ -273,8 +294,14 @@ def _preflight_findings(net) -> list[str]:
         fluid = _fluid_name(net)
         if fluid in ("(none set)", "(unknown)"):
             lines.append("- CRITICAL: no fluid is defined on the net.")
-        if hasattr(net, "ext_grid") and net.ext_grid.empty:
+        has_circ_pressure_ref = _has_active_circ_pump_pressure(net)
+        if hasattr(net, "ext_grid") and net.ext_grid.empty and not has_circ_pressure_ref:
             lines.append("- CRITICAL: net.ext_grid is empty, so there is no pressure reference.")
+        elif hasattr(net, "ext_grid") and net.ext_grid.empty and has_circ_pressure_ref:
+            lines.append(
+                "- INFO: net.ext_grid is empty, but an active circ_pump_const_pressure "
+                "(net.circ_pump_pressure) provides the pressure reference for a closed-loop heating network."
+            )
 
         lines.extend(_find_missing_junction_references(net))
         lines.extend(_find_unsupplied_junctions(net))
@@ -291,6 +318,8 @@ def _preflight_findings(net) -> list[str]:
 def _find_unsupplied_junctions(net) -> list[str]:
     lines: list[str] = []
     try:
+        if hasattr(net, "ext_grid") and net.ext_grid.empty and _has_active_circ_pump_pressure(net):
+            return lines
         import pandapipes.topology as top
         unsupplied = sorted(int(j) for j in top.unsupplied_junctions(net))
         if unsupplied:
@@ -317,8 +346,8 @@ def _find_missing_junction_references(net) -> list[str]:
             "compressor": ("from_junction", "to_junction"),
             "press_control": ("from_junction", "to_junction", "controlled_junction"),
             "flow_control": ("from_junction", "to_junction"),
-            "circ_pump_pressure": ("from_junction", "to_junction"),
-            "circ_pump_mass": ("from_junction", "to_junction"),
+            "circ_pump_pressure": ("from_junction", "to_junction", "return_junction", "flow_junction"),
+            "circ_pump_mass": ("from_junction", "to_junction", "return_junction", "flow_junction"),
             "heat_exchanger": ("from_junction", "to_junction"),
             "heat_consumer": ("from_junction", "to_junction"),
             "valve": ("junction", "from_junction", "to_junction"),
@@ -484,11 +513,11 @@ def _find_suspicious_component_values(net) -> list[str]:
             for idx, row in closed.head(8).iterrows():
                 lines.append(f"- SUSPECT: net.valve.loc[{idx}, 'opened'] = {row.opened}; closed valves can isolate a subnet.")
         if hasattr(net, "pipe") and not net.pipe.empty and "u_w_per_m2k" in net.pipe.columns:
-            high_u = net.pipe[net.pipe.u_w_per_m2k > 5]
+            high_u = net.pipe[net.pipe.u_w_per_m2k > 50]
             for idx, row in high_u.head(5).iterrows():
                 lines.append(
                     f"- SUSPECT: net.pipe.loc[{idx}, 'u_w_per_m2k'] = {row.u_w_per_m2k} W/(m2 K), "
-                    "which is a high heat-transfer coefficient."
+                    "which is an extremely high heat-transfer coefficient."
                 )
         if hasattr(net, "compressor") and not net.compressor.empty and "pressure_ratio" in net.compressor.columns:
             high_ratio = net.compressor[net.compressor.pressure_ratio > 5]
@@ -524,6 +553,18 @@ def _peer_values(df, column: str, valid_mask_factory) -> str:
         return ""
 
 
+def _has_active_circ_pump_pressure(net) -> bool:
+    try:
+        if not hasattr(net, "circ_pump_pressure") or net.circ_pump_pressure.empty:
+            return False
+        df = net.circ_pump_pressure
+        if "in_service" not in df.columns:
+            return True
+        return bool(df.in_service.astype(bool).any())
+    except Exception:
+        return False
+
+
 def _run_selected_diagnostic_checks(net, error_type: str, error_msg: str) -> list[str]:
     lines: list[str] = []
     if error_type != "PipeflowNotConverged" and "converge" not in error_msg.lower():
@@ -542,6 +583,7 @@ def _run_selected_diagnostic_checks(net, error_type: str, error_msg: str) -> lis
             HeatTransferCoefficientCheck,
             ValveOpeningCheck,
             CompressorPressureRatioCheck,
+            InactivePressureControlsCheck,
             CircPumpMassFlowCheck,
             default_argument_values,
         )
@@ -560,6 +602,7 @@ def _run_selected_diagnostic_checks(net, error_type: str, error_msg: str) -> lis
             ("heat_transfer_coefficient", HeatTransferCoefficientCheck(), None),
             ("valve_opening", ValveOpeningCheck(), []),
             ("compressor_pressure_ratio", CompressorPressureRatioCheck(), None),
+            ("inactive_pressure_controls", InactivePressureControlsCheck(), []),
             ("circ_pump_mass_flow", CircPumpMassFlowCheck(), None),
         ]
         for name, check, args in selected:
@@ -580,7 +623,7 @@ def _run_selected_diagnostic_checks(net, error_type: str, error_msg: str) -> lis
 def _format_diagnostic_results(results: dict) -> list[str]:
     lines: list[str] = []
     for name, result in results.items():
-        if result in (None, False):
+        if result is None or _is_false_result(result):
             continue
         if name == "invalid_values":
             for table, violations in result.items():
@@ -591,31 +634,52 @@ def _format_diagnostic_results(results: dict) -> list[str]:
                     )
         elif name in ("missing_node_junctions", "missing_branch_junctions"):
             lines.append(f"  - {name}: {result}")
-        elif name == "pipe_length" and result is True:
+        elif name == "pipe_length" and _is_true_result(result):
             lines.append("  - pipe_length: pipeflow converged after replacing pipe lengths with a standard short length.")
         elif name == "sink_source_scaling" and isinstance(result, dict):
             positives = [key for key, value in result.items() if value]
             for key in positives:
                 lines.append(f"  - sink_source_scaling: pipeflow converged after scaling {key} mass flows down.")
-        elif name == "pipe_diameter" and result is True:
+        elif name == "pipe_diameter" and _is_true_result(result):
             lines.append("  - pipe_diameter: pipeflow converged after increasing very small pipe diameters.")
-        elif name == "junction_height" and result is True:
+        elif name == "junction_height" and _is_true_result(result):
             lines.append("  - junction_height: pipeflow converged after flattening all junction heights to 0 m.")
         elif name == "pipe_roughness":
             lines.append(f"  - pipe_roughness: {result}")
-        elif name == "heat_transfer_coefficient" and result is True:
+        elif name == "heat_transfer_coefficient" and _is_true_result(result):
             lines.append("  - heat_transfer_coefficient: pipeflow converged after reducing high pipe heat-transfer coefficients.")
-        elif name == "valve_opening" and result is True:
+        elif name == "valve_opening" and _is_true_result(result):
             lines.append("  - valve_opening: pipeflow converged after opening all valves.")
-        elif name == "compressor_pressure_ratio" and result is True:
+        elif name == "compressor_pressure_ratio" and _is_true_result(result):
             lines.append("  - compressor_pressure_ratio: at least one compressor pressure_ratio is above the configured limit.")
-        elif name == "circ_pump_mass_flow" and result is True:
+        elif name == "inactive_pressure_controls" and _is_true_result(result):
+            lines.append(
+                "  - inactive_pressure_controls: pipeflow converged after all active pressure controls "
+                "were deactivated. The pressure-control configuration is therefore a strong candidate "
+                "for the non-convergence."
+            )
+        elif name == "circ_pump_mass_flow" and _is_true_result(result):
             lines.append("  - circ_pump_mass_flow: pipeflow converged after reducing circ_pump_mass mdot_flow_kg_per_s.")
-        elif result is True:
+        elif _is_true_result(result):
             lines.append(f"  - {name}: hypothesis check returned True.")
         elif isinstance(result, dict) and any(bool(v) for v in result.values()):
             lines.append(f"  - {name}: {result}")
     return lines
+
+
+def _is_true_result(result) -> bool:
+    return _is_bool_scalar(result) and bool(result)
+
+
+def _is_false_result(result) -> bool:
+    return _is_bool_scalar(result) and not bool(result)
+
+
+def _is_bool_scalar(result) -> bool:
+    if isinstance(result, bool):
+        return True
+    result_type = type(result)
+    return result_type.__module__ == "numpy" and result_type.__name__ in {"bool", "bool_"}
 
 
 def _index_range_text(index) -> str:
