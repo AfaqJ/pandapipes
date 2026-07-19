@@ -9,7 +9,7 @@ from pandapipes.pf.internals_toolbox import _sum_by_group
 from pandapipes.constants import P_CONVERSION, GRAVITATION_CONSTANT, NORMAL_PRESSURE, \
     NORMAL_TEMPERATURE
 from pandapipes.idx_branch import LENGTH, LAMBDA, D, LOSS_COEFFICIENT as LC, PL, AREA, \
-    MDOTINIT, TOUTINIT, FROM_NODE, TEXT, ALPHA, TL, QEXT, DO
+    MDOTINIT, TOUTINIT, FROM_NODE, TEXT, ALPHA, TL, QEXT, DO, DP_FRICT_LOSS
 from pandapipes.idx_node import HEIGHT, PINIT, PAMB, TINIT as TINIT_NODE
 
 logger = logging.getLogger(__name__)
@@ -21,13 +21,14 @@ def derivatives_hydraulic_incomp_np(branch_pit, der_lambda, p_init_i_abs, p_init
     # Use medium density ((rho_from + rho_to) / 2) for Darcy Weisbach according to
     # https://www.schweizer-fn.de/rohr/rohrleitung/rohrleitung.php#fluessigkeiten
     m_init_abs = np.abs(branch_pit[:, MDOTINIT])
+    m_abs_deriv = np.maximum(m_init_abs, 1e-8)
     m_init2 = m_init_abs * branch_pit[:, MDOTINIT]
     p_diff = p_init_i_abs - p_init_i1_abs
     const_height = rho * GRAVITATION_CONSTANT * height_difference / P_CONVERSION
     friction_term = np.divide(branch_pit[:, LENGTH] * branch_pit[:, LAMBDA], branch_pit[:, D]) + branch_pit[:, LC]
     const_term = np.divide(1, branch_pit[:, AREA] ** 2 * rho * P_CONVERSION * 2)
 
-    df_dm = - const_term * (2 * m_init_abs * friction_term + der_lambda
+    df_dm = - const_term * (2 * m_abs_deriv * friction_term + der_lambda
                             * np.divide(branch_pit[:, LENGTH], branch_pit[:, D]) * m_init2)
 
     load_vec = p_diff + branch_pit[:, PL] + const_height - const_term * m_init2 * friction_term
@@ -40,13 +41,16 @@ def derivatives_hydraulic_incomp_np(branch_pit, der_lambda, p_init_i_abs, p_init
     load_vec_nodes_from = branch_pit[:, MDOTINIT]
     load_vec_nodes_to = branch_pit[:, MDOTINIT]
 
-    return load_vec, load_vec_nodes_from, load_vec_nodes_to, df_dm, df_dm_nodes, df_dp, df_dp1
+    dp_frict_loss = const_term * m_init2 * friction_term
+
+    return load_vec, load_vec_nodes_from, load_vec_nodes_to, df_dm, df_dm_nodes, df_dp, df_dp1, dp_frict_loss
 
 
 def derivatives_hydraulic_comp_np(node_pit, branch_pit, lambda_, der_lambda, p_init_i_abs, p_init_i1_abs,
                                   height_difference, comp_fact, der_comp, der_comp1, rho, rho_n):
     # Formulas for gas pressure loss according to laminar version
     m_init_abs = np.abs(branch_pit[:, MDOTINIT])
+    m_abs_deriv = np.maximum(m_init_abs, 1e-8)
     m_init2 = branch_pit[:, MDOTINIT] * m_init_abs
     p_diff = p_init_i_abs - p_init_i1_abs
     p_sum = p_init_i_abs + p_init_i1_abs
@@ -62,8 +66,9 @@ def derivatives_hydraulic_comp_np(node_pit, branch_pit, lambda_, der_lambda, p_i
     df_dp1 = -1. - const_term_p * p_sum_div * (der_comp1 - comp_fact * p_sum_div)
 
     const_term_m = normal_term * p_sum_div * tm * comp_fact
-    df_dm = - const_term_m * (2 * m_init_abs * friction_term +
+    df_dm = - const_term_m * (2 * m_abs_deriv * friction_term +
                             np.divide(der_lambda * branch_pit[:, LENGTH] * m_init2, branch_pit[:, D]))
+    df_dm[np.isclose(m_init_abs, 0)] = 1.
 
     load_vec = p_diff + branch_pit[:, PL] + const_height \
                - normal_term * comp_fact * m_init2 * friction_term * p_sum_div * tm
@@ -72,8 +77,9 @@ def derivatives_hydraulic_comp_np(node_pit, branch_pit, lambda_, der_lambda, p_i
 
     load_vec_nodes_from = branch_pit[:, MDOTINIT]
     load_vec_nodes_to = branch_pit[:, MDOTINIT]
+    dp_frict_loss = normal_term * comp_fact * m_init2 * friction_term * p_sum_div * tm
 
-    return load_vec, load_vec_nodes_from, load_vec_nodes_to, df_dm, df_dm_nodes, df_dp, df_dp1
+    return load_vec, load_vec_nodes_from, load_vec_nodes_to, df_dm, df_dm_nodes, df_dp, df_dp1, dp_frict_loss
 
 def derivatives_thermal_np(node_pit, branch_pit,
                            node_pit_old, node_pit_old_lookup,
