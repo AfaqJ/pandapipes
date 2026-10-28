@@ -8,6 +8,8 @@ The map background uses plotly's built-in token-free styles (e.g. "carto-positro
 "open-street-map"), so no account or API key is needed. Plotly >= 5.24 is required.
 """
 
+import warnings
+
 import numpy as np
 
 # Branch-like components drawn as a line between two junctions: table -> (from column, to column).
@@ -32,10 +34,15 @@ _NODE_COMPONENTS = {
 
 _N_COLOR_BINS = 32
 
+_CRS_HINT = ("The {what} coordinates are not valid longitude/latitude values (WGS84). Convert them "
+             "first, e.g. with pandapipes.plotting.convert_epsg_junction_geodata(net, epsg_in=<your "
+             "EPSG>, epsg_out=4326) and, if the network has pipe_geodata, "
+             "pandapipes.plotting.convert_epsg_pipe_geodata(...).")
+
 
 def create_map_figure(net, map_style="carto-positron", zoom=None, pipe_color="#1f77b4",
                       pipe_result=None, colorscale="Bluered", colorbar_title=None,
-                      show_components=True, show_junctions=True, height=700):
+                      no_flow_color="#b0b0b0", show_components=True, show_junctions=True, height=700):
     """Create an interactive plotly figure of a pandapipes network on a web map.
 
     The junction geodata (``net.junction_geodata``) must hold WGS84 coordinates with
@@ -60,6 +67,10 @@ def create_map_figure(net, map_style="carto-positron", zoom=None, pipe_color="#1
     :type colorscale: str
     :param colorbar_title: Title of the colorbar, defaults to the ``pipe_result`` name
     :type colorbar_title: str, optional
+    :param no_flow_color: Color of pipes without flow when ``pipe_result`` is used. Such pipes
+        are excluded from the color range (e.g. their temperature is just the ambient
+        temperature). Pass None to color them like all other pipes
+    :type no_flow_color: str, optional
     :param show_components: Draw ext_grids, sources, sinks, pumps, valves, etc.
     :type show_components: bool
     :param show_junctions: Draw junction markers
@@ -84,29 +95,38 @@ def create_map_figure(net, map_style="carto-positron", zoom=None, pipe_color="#1
 
     pipes = _pipe_lines(net, geo)
     if pipe_result is None:
-        _add_lines(fig, [pipes], "Pipes", pipe_color, width=3)
+        _add_lines(fig, [pipes], "Pipes", pipe_color, width=2)
     else:
-        _add_colored_pipes(fig, net, pipes, pipe_result, colorscale, colorbar_title)
+        _add_colored_pipes(fig, net, pipes, pipe_result, colorscale, colorbar_title, no_flow_color)
 
     if show_components:
         _add_components(fig, net, geo)
     if show_junctions:
         fig.add_trace(go.Scattermap(
             lon=geo["lon"], lat=geo["lat"], mode="markers", name="Junctions",
-            marker=dict(size=6, color="#444444"),
+            marker=dict(size=4, color="#444444"),
             text=[f"Junction {idx}" for idx in geo.index], hoverinfo="text"))
 
-    layout_map = dict(style=map_style)
-    if zoom is None:
-        pad = 0.05 * max(np.ptp(geo["lon"]), np.ptp(geo["lat"]), 1e-4)
-        layout_map["bounds"] = dict(west=geo["lon"].min() - pad, east=geo["lon"].max() + pad,
-                                    south=geo["lat"].min() - pad, north=geo["lat"].max() + pad)
-    else:
-        layout_map["zoom"] = zoom
-        layout_map["center"] = dict(lon=float(geo["lon"].mean()), lat=float(geo["lat"].mean()))
+    center, fitted_zoom = _fit_view(geo, height)
+    layout_map = dict(style=map_style, center=center, zoom=fitted_zoom if zoom is None else zoom)
     fig.update_layout(map=layout_map, height=height, margin=dict(l=0, r=0, t=0, b=0),
                       legend=dict(x=0.01, y=0.99))
     return fig
+
+
+def _fit_view(geo, height_px, width_px=1000, margin=0.3):
+    """Return map center and zoom so that all junctions are visible (web-mercator, 512 px tiles)."""
+    def mercator_y(lat):
+        return np.degrees(np.log(np.tan(np.pi / 4 + np.radians(lat) / 2)))
+
+    lon_span = max(float(np.ptp(geo["lon"])), 1e-6)
+    y_min, y_max = mercator_y(geo["lat"].min()), mercator_y(geo["lat"].max())
+    y_span = max(float(y_max - y_min), 1e-6)
+    zoom = min(np.log2(360 * width_px / (512 * lon_span)), np.log2(360 * height_px / (512 * y_span)))
+    center_y = (y_min + y_max) / 2
+    center = dict(lon=float((geo["lon"].min() + geo["lon"].max()) / 2),
+                  lat=float(np.degrees(2 * np.arctan(np.exp(np.radians(center_y))) - np.pi / 2)))
+    return center, float(np.clip(zoom - margin, 0, 18))
 
 
 def _junction_lonlat(net):
@@ -118,13 +138,18 @@ def _junction_lonlat(net):
         raise ValueError("net.junction_geodata needs the columns 'x' (longitude) and "
                          "'y' (latitude).")
     geo = geodata[["x", "y"]].rename(columns={"x": "lon", "y": "lat"}).astype(float)
-    if not (geo["lon"].between(-180, 180).all() and geo["lat"].between(-90, 90).all()):
-        raise ValueError(
-            "The junction coordinates are not valid longitude/latitude values (WGS84). "
-            "Convert them first, e.g. with "
-            "pandapipes.plotting.convert_epsg_junction_geodata(net, epsg_in=<your EPSG>, "
-            "epsg_out=4326).")
+    missing = geo.isna().any(axis=1)
+    if missing.any():
+        warnings.warn(f"{int(missing.sum())} junctions have no coordinates; they and the elements "
+                      f"connected to them are not drawn.")
+        geo = geo[~missing]
+    if not _is_lonlat(geo["lon"], geo["lat"]):
+        raise ValueError(_CRS_HINT.format(what="junction"))
     return geo
+
+
+def _is_lonlat(lon, lat):
+    return bool(np.all(np.abs(lon) <= 180) and np.all(np.abs(lat) <= 90))
 
 
 def _empty_frame():
@@ -142,6 +167,8 @@ def _pipe_lines(net, geo):
             else None
         if coords is not None and len(coords) > 1:
             lons, lats = zip(*[(c[0], c[1]) for c in coords])
+            if not _is_lonlat(np.array(lons), np.array(lats)):
+                raise ValueError(_CRS_HINT.format(what="pipe route"))
         elif row["from_junction"] in geo.index and row["to_junction"] in geo.index:
             pair = geo.loc[[row["from_junction"], row["to_junction"]]]
             lons, lats = pair["lon"].tolist(), pair["lat"].tolist()
@@ -176,8 +203,9 @@ def _add_lines(fig, line_dicts, name, color, width, texts=None, dash=False):
         hoverinfo="text" if texts is not None else "skip"))
 
 
-def _add_colored_pipes(fig, net, pipes, pipe_result, colorscale, colorbar_title):
+def _add_colored_pipes(fig, net, pipes, pipe_result, colorscale, colorbar_title, no_flow_color):
     """Color pipes by a res_pipe column using few traces (one per color bin) for speed."""
+    import pandas as pd
     import plotly.graph_objects as go
     from plotly.colors import sample_colorscale
 
@@ -189,15 +217,24 @@ def _add_colored_pipes(fig, net, pipes, pipe_result, colorscale, colorbar_title)
         raise ValueError(f"'{pipe_result}' is not a column of net.res_pipe. "
                          f"Available: {', '.join(map(str, res.columns))}")
     values = res[pipe_result].astype(float)
-    vmin, vmax = float(values.min()), float(values.max())
+    no_flow = pd.Series(False, index=values.index)
+    if no_flow_color is not None and "mdot_from_kg_per_s" in res.columns:
+        no_flow = res["mdot_from_kg_per_s"].abs() < 1e-9
+        if no_flow.all():  # nothing to compare against, color everything
+            no_flow[:] = False
+    colored = values[~no_flow]
+    vmin, vmax = float(colored.min()), float(colored.max())
     span = vmax - vmin if vmax > vmin else 1.0
-    bins = np.minimum(((values - vmin) / span * _N_COLOR_BINS).astype(int), _N_COLOR_BINS - 1)
+    bins = np.clip(((values - vmin) / span * _N_COLOR_BINS).astype(int), 0, _N_COLOR_BINS - 1)
     bin_colors = sample_colorscale(colorscale, [(b + 0.5) / _N_COLOR_BINS
                                                 for b in range(_N_COLOR_BINS)])
     texts = {idx: f"Pipe {idx}: {values[idx]:.4g} ({pipe_result})" for idx in values.index}
+    if no_flow.any():
+        idle = {idx: pipes[idx] for idx in values.index[no_flow] if idx in pipes}
+        _add_lines(fig, [idle], "Pipes without flow", no_flow_color, width=3, texts=texts)
     for b in range(_N_COLOR_BINS):
-        members = {idx: pipes[idx] for idx in values.index[bins == b] if idx in pipes}
-        _add_lines(fig, [members], f"Pipes ({pipe_result})", bin_colors[b], width=4,
+        members = {idx: pipes[idx] for idx in values.index[(bins == b) & ~no_flow] if idx in pipes}
+        _add_lines(fig, [members], f"Pipes ({pipe_result})", bin_colors[b], width=3,
                    texts=texts)
         if members:
             fig.data[-1].showlegend = False
@@ -251,5 +288,5 @@ def _add_components(fig, net, geo):
         pts = geo.loc[rows["junction"]]
         fig.add_trace(go.Scattermap(
             lon=pts["lon"], lat=pts["lat"], mode="markers", name=table,
-            marker=dict(size=12, color=color),
+            marker=dict(size=7, color=color),
             text=[f"{table} {i}" for i in rows.index], hoverinfo="text"))

@@ -25,4 +25,7 @@ the browser from public tile servers, so an internet connection is needed to dis
     fig = create_map_figure(net, pipe_result="v_mean_m_per_s")
     fig.show()
 
+See the tutorial ``plotly_map_plotting`` for a complete district heating example showing the
+temperatures in a closed supply/return loop.
+
 .. autofunction:: pandapipes.plotting.create_map_figure
