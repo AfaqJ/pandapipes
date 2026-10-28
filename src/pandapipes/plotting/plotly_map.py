@@ -8,9 +8,12 @@ The map background uses plotly's built-in token-free styles (e.g. "carto-positro
 "open-street-map"), so no account or API key is needed. Plotly >= 5.24 is required.
 """
 
+# plotly is an optional dependency, so it is imported inside the functions that draw (lazy import).
+# pylint: disable=import-outside-toplevel
 import warnings
 
 import numpy as np
+import pandas as pd
 
 # Branch-like components drawn as a line between two junctions: table -> (from column, to column).
 _LINE_COMPONENTS = {
@@ -104,13 +107,13 @@ def create_map_figure(net, map_style="carto-positron", zoom=None, pipe_color="#1
     if show_junctions:
         fig.add_trace(go.Scattermap(
             lon=geo["lon"], lat=geo["lat"], mode="markers", name="Junctions",
-            marker=dict(size=4, color="#444444"),
+            marker={"size": 4, "color": "#444444"},
             text=[f"Junction {idx}" for idx in geo.index], hoverinfo="text"))
 
     center, fitted_zoom = _fit_view(geo, height)
-    layout_map = dict(style=map_style, center=center, zoom=fitted_zoom if zoom is None else zoom)
-    fig.update_layout(map=layout_map, height=height, margin=dict(l=0, r=0, t=0, b=0),
-                      legend=dict(x=0.01, y=0.99))
+    layout_map = {"style": map_style, "center": center, "zoom": fitted_zoom if zoom is None else zoom}
+    fig.update_layout(map=layout_map, height=height, margin={"l": 0, "r": 0, "t": 0, "b": 0},
+                      legend={"x": 0.01, "y": 0.99})
     return fig
 
 
@@ -124,8 +127,8 @@ def _fit_view(geo, height_px, width_px=1000, margin=0.3):
     y_span = max(float(y_max - y_min), 1e-6)
     zoom = min(np.log2(360 * width_px / (512 * lon_span)), np.log2(360 * height_px / (512 * y_span)))
     center_y = (y_min + y_max) / 2
-    center = dict(lon=float((geo["lon"].min() + geo["lon"].max()) / 2),
-                  lat=float(np.degrees(2 * np.arctan(np.exp(np.radians(center_y))) - np.pi / 2)))
+    center = {"lon": float((geo["lon"].min() + geo["lon"].max()) / 2),
+              "lat": float(np.degrees(2 * np.arctan(np.exp(np.radians(center_y))) - np.pi / 2))}
     return center, float(np.clip(zoom - margin, 0, 18))
 
 
@@ -153,7 +156,6 @@ def _is_lonlat(lon, lat):
 
 
 def _empty_frame():
-    import pandas as pd
     return pd.DataFrame(columns=["lon", "lat"])
 
 
@@ -189,7 +191,7 @@ def _joined(lines, texts=None):
     return lon, lat, text
 
 
-def _add_lines(fig, line_dicts, name, color, width, texts=None, dash=False):
+def _add_lines(fig, line_dicts, name, color, width, texts=None):
     import plotly.graph_objects as go
     lines = {}
     for line_dict in line_dicts:
@@ -198,14 +200,13 @@ def _add_lines(fig, line_dicts, name, color, width, texts=None, dash=False):
         return
     lon, lat, text = _joined(lines, texts)
     fig.add_trace(go.Scattermap(
-        lon=lon, lat=lat, mode="lines", name=name, line=dict(color=color, width=width),
+        lon=lon, lat=lat, mode="lines", name=name, line={"color": color, "width": width},
         text=text if texts is not None else None,
         hoverinfo="text" if texts is not None else "skip"))
 
 
 def _add_colored_pipes(fig, net, pipes, pipe_result, colorscale, colorbar_title, no_flow_color):
     """Color pipes by a res_pipe column using few traces (one per color bin) for speed."""
-    import pandas as pd
     import plotly.graph_objects as go
     from plotly.colors import sample_colorscale
 
@@ -242,10 +243,10 @@ def _add_colored_pipes(fig, net, pipes, pipe_result, colorscale, colorbar_title,
     first = next(iter(pipes.values()))
     fig.add_trace(go.Scattermap(
         lon=[first[0][0]] * 2, lat=[first[1][0]] * 2, mode="markers", hoverinfo="skip",
-        showlegend=False, marker=dict(
-            size=0, color=[vmin, vmax], cmin=vmin, cmax=vmax, colorscale=colorscale,
-            showscale=True, colorbar=dict(title=colorbar_title or pipe_result,
-                                          y=0.88, yanchor="top", len=0.75))))
+        showlegend=False, marker={
+            "size": 0, "color": [vmin, vmax], "cmin": vmin, "cmax": vmax, "colorscale": colorscale,
+            "showscale": True,
+            "colorbar": {"title": colorbar_title or pipe_result, "y": 0.88, "yanchor": "top", "len": 0.75}}))
 
 
 def _add_components(fig, net, geo):
@@ -266,7 +267,7 @@ def _add_components(fig, net, geo):
             pts = geo.loc[list(valve_points.values())]
             fig.add_trace(go.Scattermap(
                 lon=pts["lon"], lat=pts["lat"], mode="markers", name="Valves",
-                marker=dict(size=9, color="#8c564b"),
+                marker={"size": 9, "color": "#8c564b"},
                 text=[f"Valve {i}" for i in valve_points], hoverinfo="text"))
 
     for table, (from_col, to_col) in _LINE_COMPONENTS.items():
@@ -289,5 +290,5 @@ def _add_components(fig, net, geo):
         pts = geo.loc[rows["junction"]]
         fig.add_trace(go.Scattermap(
             lon=pts["lon"], lat=pts["lat"], mode="markers", name=table,
-            marker=dict(size=7, color=color),
+            marker={"size": 7, "color": color},
             text=[f"{table} {i}" for i in rows.index], hoverinfo="text"))
