@@ -17,7 +17,9 @@ Token budget (chars ÷ 4 ≈ tokens, worst-case with 8192 num_ctx):
 from __future__ import annotations
 
 import logging
+import math
 
+import pandapipes.topology as top
 from pandapipes.explain.context.traceback_parser import SourceContext, read_full_source
 
 logger = logging.getLogger(__name__)
@@ -107,7 +109,7 @@ def _find_net_in_traceback(exc_tb):
                     return var_val
             frame = frame.tb_next
     except Exception:
-        pass
+        logger.debug("could not search traceback locals for a net", exc_info=True)
     return None
 
 
@@ -169,7 +171,6 @@ def _fluid_name(net) -> str:
 
 def _summarise_net(var_name: str, net) -> str:
     """Build a plain-text summary of the pandapipes network."""
-    import math
     try:
         fluid = _fluid_name(net)
         has_circ_pressure_ref = _has_active_circ_pump_pressure(net)
@@ -324,7 +325,6 @@ def _find_unsupplied_junctions(net) -> list[str]:
     try:
         if hasattr(net, "ext_grid") and net.ext_grid.empty and _has_active_circ_pump_pressure(net):
             return lines
-        import pandapipes.topology as top
         unsupplied = sorted(int(j) for j in top.unsupplied_junctions(net))
         if unsupplied:
             shown = unsupplied[:10]
@@ -485,7 +485,7 @@ def _find_suspicious_sink_source_values(net) -> list[str]:
                 bad = df[df.mdot_kg_per_s.isna() | (df.mdot_kg_per_s < 0) | (df.mdot_kg_per_s > 100)]
                 for idx, row in bad.head(8).iterrows():
                     value = row.mdot_kg_per_s
-                    if value != value:
+                    if math.isnan(value):
                         why = "is NaN"
                         severity = "CRITICAL"
                     elif value < 0:

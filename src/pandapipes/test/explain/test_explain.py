@@ -265,3 +265,11 @@ def test_disable_does_not_clobber_replaced_stdout():
         assert sys.stdout is replacement
     finally:
         sys.stdout = original
+
+
+def test_client_rejects_non_http_urls():
+    import pytest
+    from pandapipes.explain.llm.client import _open
+
+    with pytest.raises(ValueError):
+        _open("file:///etc/passwd", 1)

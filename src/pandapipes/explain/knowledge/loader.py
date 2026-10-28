@@ -7,8 +7,11 @@ markdown sections. No ML, no embeddings, instant.
 
 from __future__ import annotations
 
+import logging
 import re
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 # Directory containing the curated .md files.
 _PACK_DIR = Path(__file__).parent / "pack"
@@ -123,7 +126,7 @@ def _ensure_cache() -> None:
         try:
             _cache[md_file.name] = md_file.read_text(encoding="utf-8")
         except Exception:
-            pass
+            logger.debug("could not read knowledge file %s", md_file, exc_info=True)
 
 
 def _score(content: str, keywords: set[str]) -> int:
@@ -174,7 +177,8 @@ def _forced_sections(raw_terms: str) -> list[tuple[str, str, str]]:
             ("02_invalid_values.md", "Cause 5: Non-existent junction index"),
             ("03_topology.md", "Cause 4: Pipe connected to a non-existent junction"),
         ])
-    if "opened'] =" in raw_terms or 'opened"] =' in raw_terms or "closed valve" in raw_terms or "valve_opening" in raw_terms or "valve_configuration" in raw_terms:
+    valve_markers = ("opened'] =", 'opened"] =', "closed valve", "valve_opening", "valve_configuration")
+    if any(marker in raw_terms for marker in valve_markers):
         forced_headings.append(("03_topology.md", "Cause 2: Closed valve isolating a section"))
     if "pressure_ratio'] =" in raw_terms or 'pressure_ratio"] =' in raw_terms or "compressor_pressure_ratio:" in raw_terms:
         forced_headings.append(("06_components_and_other.md", "2. Pump / compressor issues"))

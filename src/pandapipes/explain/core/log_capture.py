@@ -52,7 +52,7 @@ class _Tee:
                     line, self._pending = self._pending.split("\n", 1)
                     with _lock:
                         _buffer.append(line)
-        except Exception:
+        except Exception:  # nosec B110 - never log from inside the stdout tee: it would recurse
             pass
         return n
 

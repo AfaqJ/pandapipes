@@ -14,12 +14,18 @@ import urllib.request
 from pandapipes.explain.core.config import get_config
 
 
+def _open(url_or_request, timeout):
+    """urlopen that only talks http(s): rejects file:/ and other schemes from a bad config."""
+    url = url_or_request if isinstance(url_or_request, str) else url_or_request.full_url
+    if not url.startswith(("http://", "https://")):
+        raise ValueError(f"Only http(s) URLs are allowed, got: {url}")
+    return urllib.request.urlopen(url_or_request, timeout=timeout)  # nosec B310 - scheme checked above
+
+
 def is_available() -> bool:
     """Return True if the Ollama server is reachable."""
     try:
-        with urllib.request.urlopen(
-            f"{get_config().ollama_host}/api/tags", timeout=2
-        ):
+        with _open(f"{get_config().ollama_host}/api/tags", 2):
             return True
     except Exception:
         return False
@@ -28,9 +34,7 @@ def is_available() -> bool:
 def list_models() -> list[str]:
     """Return names of locally available Ollama models."""
     try:
-        with urllib.request.urlopen(
-            f"{get_config().ollama_host}/api/tags", timeout=5
-        ) as resp:
+        with _open(f"{get_config().ollama_host}/api/tags", 5) as resp:
             data = json.load(resp)
             return [m["name"] for m in data.get("models", [])]
     except Exception:
@@ -81,7 +85,7 @@ def chat(messages: list[dict]) -> str | None:
     # hint so the user knows we're querying.
     print("\n[pandapipes-explain] Querying Ollama...", file=sys.stderr)
     try:
-        with urllib.request.urlopen(req, timeout=cfg.request_timeout) as resp:
+        with _open(req, cfg.request_timeout) as resp:
             body = json.load(resp)
             return body["message"]["content"]
     except Exception:
