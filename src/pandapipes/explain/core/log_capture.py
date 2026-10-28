@@ -29,6 +29,7 @@ _lock = threading.Lock()
 _installed = False
 _orig_stdout = None
 _orig_showwarning = None
+_tee = None
 
 
 class _Tee:
@@ -67,32 +68,29 @@ class _Tee:
 
 def install() -> None:
     """Replace sys.stdout with a capturing tee and record Python warnings."""
-    global _installed, _orig_stdout, _orig_showwarning
+    global _installed, _orig_stdout, _orig_showwarning, _tee
     if _installed:
         return
     _orig_stdout = sys.stdout
     _orig_showwarning = warnings.showwarning
-    sys.stdout = _Tee(_orig_stdout)
+    _tee = _Tee(_orig_stdout)
+    sys.stdout = _tee
     warnings.showwarning = _capture_warning
     _installed = True
 
 
 def uninstall() -> None:
-    """Restore the original sys.stdout."""
-    global _installed, _orig_stdout, _orig_showwarning
+    """Restore sys.stdout / warnings.showwarning, unless someone else replaced them since."""
+    global _installed, _orig_stdout, _orig_showwarning, _tee
     if not _installed:
         return
-    try:
+    if sys.stdout is _tee:
         sys.stdout = _orig_stdout
-    except Exception:
-        pass
-    try:
-        if _orig_showwarning is not None:
-            warnings.showwarning = _orig_showwarning
-    except Exception:
-        pass
+    if _orig_showwarning is not None and warnings.showwarning is _capture_warning:
+        warnings.showwarning = _orig_showwarning
     _orig_stdout = None
     _orig_showwarning = None
+    _tee = None
     _installed = False
 
 

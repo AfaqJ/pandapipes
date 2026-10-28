@@ -39,14 +39,6 @@ def handle(
     """
     cfg = get_config()
 
-    # --- Check Ollama availability ---
-    if not llm_client.is_available():
-        _print_hint(
-            "Ollama not running. Start it with: ollama serve\n"
-            f"  Then make sure the model is pulled: ollama pull {cfg.model}"
-        )
-        return
-
     # --- Extract source context from traceback ---
     contexts = extract_context(exc_tb, cfg.source_context_lines, cfg.target_package)
     user_contexts = [c for c in contexts if c.is_user_code]
@@ -57,6 +49,21 @@ def handle(
 
     # --- Extract network stats from traceback locals ---
     net_stats = llm_prompt.extract_net_stats(exc_tb)
+
+    # --- Ignore errors unrelated to pandapipes (no pandapipes frame, no network in scope) ---
+    if not lib_contexts and not net_stats:
+        return
+
+    # --- Check Ollama availability ---
+    if not llm_client.is_available():
+        _print_hint(
+            "Ollama not running. Start it with: ollama serve\n"
+            f"  Then make sure the model is pulled: ollama pull {cfg.model}"
+        )
+        return
+    if not llm_client.model_available(cfg.model):
+        _print_hint(f"Model '{cfg.model}' is not available locally. Pull it with: ollama pull {cfg.model}")
+        return
 
     # --- Grab the tail of stdout/warnings captured before the error ---
     terminal_logs = log_capture.get_recent_output()

@@ -16,6 +16,10 @@ with pandapipes.explain.explain():
 from pandapipes.explain.core.config import get_config
 from pandapipes.explain.core import intercept
 from contextlib import contextmanager
+import dataclasses
+import logging
+
+logger = logging.getLogger(__name__)
 
 __version__ = "0.1.0"
 __all__ = ["enable", "disable", "explain"]
@@ -77,6 +81,8 @@ def explain(
     with pandapipes.explain.explain():
         pp.pipeflow(net)
     """
+    # Remember the previous state so a global enable() made by the user survives this block.
+    previous = dataclasses.replace(get_config())
     enable(model=model, ollama_host=ollama_host, source_context_lines=source_context_lines,
            request_timeout=request_timeout)
     try:
@@ -88,15 +94,19 @@ def explain(
         # Print the traceback exactly once here.
         _tb.print_exception(exc_type, exc, exc_tb)
         # Temporarily disable so the re-raise does NOT trigger the excepthook again.
-        from pandapipes.explain.core.config import get_config
         get_config().enabled = False
         try:
             from pandapipes.explain.core import dispatcher
             dispatcher.handle(exc_type, exc, exc_tb)
         except Exception:
-            pass
+            logger.debug("explain failed", exc_info=True)
         finally:
             get_config().enabled = True
         raise
     finally:
-        disable()
+        if previous.enabled:
+            cfg = get_config()
+            for field in dataclasses.fields(previous):
+                setattr(cfg, field.name, getattr(previous, field.name))
+        else:
+            disable()

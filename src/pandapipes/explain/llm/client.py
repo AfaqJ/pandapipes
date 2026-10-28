@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import json
 import sys
-import urllib.error
 import urllib.request
 
 from pandapipes.explain.core.config import get_config
@@ -39,8 +38,9 @@ def list_models() -> list[str]:
 
 
 def model_available(model: str) -> bool:
-    """Return True if `model` (or a variant) is pulled in Ollama."""
-    return any(m.startswith(model.split(":")[0]) for m in list_models())
+    """Return True if exactly `model` is pulled in Ollama (no tag means ``:latest``)."""
+    wanted = model if ":" in model else f"{model}:latest"
+    return wanted in list_models()
 
 
 def chat(messages: list[dict]) -> str | None:
@@ -84,7 +84,5 @@ def chat(messages: list[dict]) -> str | None:
         with urllib.request.urlopen(req, timeout=cfg.request_timeout) as resp:
             body = json.load(resp)
             return body["message"]["content"]
-    except urllib.error.URLError:
-        return None
     except Exception:
         return None

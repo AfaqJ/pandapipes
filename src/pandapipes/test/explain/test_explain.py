@@ -185,6 +185,7 @@ def test_full_pipeline_prints_explanation_with_mocked_ollama(monkeypatch, capsys
         "(c) Fix - pps.create_ext_grid(net, junction=0, p_bar=5.0, t_k=293.15)"
     )
     monkeypatch.setattr(llm_client, "is_available", lambda: True)
+    monkeypatch.setattr(llm_client, "model_available", lambda model: True)
     monkeypatch.setattr(llm_client, "chat", lambda messages: canned)
 
     net = _faulty_net()
@@ -205,3 +206,62 @@ def test_program_survives_when_ollama_unreachable():
     with pytest.raises(PipeflowNotConverged):
         with ppe.explain(ollama_host="http://127.0.0.1:59999"):
             pps.pipeflow(net)
+
+
+def test_model_available_requires_exact_tag(monkeypatch):
+    monkeypatch.setattr(llm_client, "list_models", lambda: ["llama3.1:70b", "llama3.2:3b", "mistral:latest"])
+    assert not llm_client.model_available("llama3.1:8b")
+    assert not llm_client.model_available("llama3")
+    assert llm_client.model_available("llama3.1:70b")
+    assert llm_client.model_available("mistral")
+
+
+def test_missing_model_prints_pull_hint(monkeypatch, capsys):
+    monkeypatch.setattr(llm_client, "is_available", lambda: True)
+    monkeypatch.setattr(llm_client, "model_available", lambda model: False)
+    monkeypatch.setattr(llm_client, "chat", lambda messages: pytest.fail("must not query a missing model"))
+
+    net = _faulty_net()
+    with pytest.raises(PipeflowNotConverged) as ei:
+        pps.pipeflow(net)
+    dispatcher.handle(type(ei.value), ei.value, ei.value.__traceback__)
+    assert "ollama pull" in capsys.readouterr().err
+
+
+def test_unrelated_exception_does_not_query_ollama(monkeypatch, tmp_path):
+    import runpy
+
+    script = tmp_path / "user_script.py"
+    script.write_text("d = {}\nd['missing']\n")
+    monkeypatch.setattr(llm_client, "is_available", lambda: pytest.fail("must not contact Ollama"))
+    try:
+        runpy.run_path(str(script))
+    except KeyError as exc:
+        # tb_next drops this test's own frame (it lives under src/pandapipes/), leaving user-script frames only.
+        dispatcher.handle(type(exc), exc, exc.__traceback__.tb_next)
+
+
+def test_context_manager_keeps_prior_global_enable():
+    ppe.enable(model="custom:1b")
+    try:
+        with pytest.raises(ZeroDivisionError):
+            with ppe.explain(ollama_host="http://127.0.0.1:59999"):
+                1 / 0
+        assert get_config().enabled
+        assert get_config().model == "custom:1b"
+    finally:
+        ppe.disable()
+
+
+def test_disable_does_not_clobber_replaced_stdout():
+    import io
+
+    ppe.enable()
+    replacement = io.StringIO()
+    original = sys.stdout
+    sys.stdout = replacement
+    try:
+        ppe.disable()
+        assert sys.stdout is replacement
+    finally:
+        sys.stdout = original

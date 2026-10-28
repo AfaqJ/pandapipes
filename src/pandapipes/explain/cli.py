@@ -33,7 +33,7 @@ def main(argv: list[str] | None = None) -> None:
 
 
 def _cmd_status() -> None:
-    from pandapipes.explain.llm.client import is_available, list_models
+    from pandapipes.explain.llm.client import is_available, list_models, model_available
     from pandapipes.explain.core.config import get_config
 
     cfg = get_config()
@@ -45,8 +45,7 @@ def _cmd_status() -> None:
         models = list_models()
         if models:
             print("Models      :", ", ".join(models))
-            model_base = cfg.model.split(":")[0]
-            if any(m.startswith(model_base) for m in models):
+            if model_available(cfg.model):
                 print(f"Target model: ✓ {cfg.model} is available")
             else:
                 print(f"Target model: ✗ '{cfg.model}' not found — run: ollama pull {cfg.model}")

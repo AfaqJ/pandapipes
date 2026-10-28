@@ -5,6 +5,7 @@ modifying pandapipes or the user's exception flow.
 
 from __future__ import annotations
 
+import logging
 import sys
 from types import TracebackType
 from typing import Type
@@ -12,11 +13,14 @@ from typing import Type
 from pandapipes.explain.core.config import get_config
 from pandapipes.explain.core import log_capture
 
+logger = logging.getLogger(__name__)
+
 # The hook that was active BEFORE we installed ours. Captured in install()
 # (not at module import time) so we don't race with pytest / Sentry / IPython
 # hooks that may be installed after import but before enable().
 _saved_excepthook = None
 _installed = False
+_ipython_shell = None
 
 
 def _hook(
@@ -44,7 +48,7 @@ def _hook(
         from pandapipes.explain.core import dispatcher
         dispatcher.handle(exc_type, exc_value, exc_tb)
     except Exception:
-        pass
+        logger.debug("explain failed", exc_info=True)
 
 
 def install() -> None:
@@ -68,6 +72,7 @@ def uninstall() -> None:
     get_config().enabled = False
     log_capture.uninstall()
     sys.excepthook = _saved_excepthook if _saved_excepthook is not None else sys.__excepthook__
+    _try_uninstall_ipython_hook()
     _saved_excepthook = None
     _installed = False
 
@@ -78,13 +83,26 @@ def _try_install_ipython_hook() -> None:
     # arbitrary imported modules — so we have to import it explicitly instead of
     # calling it as a builtin. ImportError means IPython isn't installed; a
     # None return means IPython is installed but we're not running inside it.
+    global _ipython_shell
     try:
         from IPython.core.getipython import get_ipython
         ip = get_ipython()
         if ip is not None:
             ip.set_custom_exc((Exception,), _ipython_handler)
+            _ipython_shell = ip
     except Exception:
-        pass
+        logger.debug("could not register IPython hook", exc_info=True)
+
+
+def _try_uninstall_ipython_hook() -> None:
+    """Remove our IPython handler so tracebacks go back to IPython's default."""
+    global _ipython_shell
+    try:
+        if _ipython_shell is not None:
+            _ipython_shell.set_custom_exc((), None)
+    except Exception:
+        logger.debug("could not unregister IPython hook", exc_info=True)
+    _ipython_shell = None
 
 
 def _ipython_handler(shell, etype, evalue, tb, tb_offset=None):
@@ -102,6 +120,6 @@ def _ipython_handler(shell, etype, evalue, tb, tb_offset=None):
         from pandapipes.explain.core import dispatcher
         dispatcher.handle(etype, evalue, tb)
     except Exception:
-        pass
+        logger.debug("explain failed", exc_info=True)
 
     return None
