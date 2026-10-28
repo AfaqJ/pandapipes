@@ -244,7 +244,8 @@ def _add_colored_pipes(fig, net, pipes, pipe_result, colorscale, colorbar_title,
         lon=[first[0][0]] * 2, lat=[first[1][0]] * 2, mode="markers", hoverinfo="skip",
         showlegend=False, marker=dict(
             size=0, color=[vmin, vmax], cmin=vmin, cmax=vmax, colorscale=colorscale,
-            showscale=True, colorbar=dict(title=colorbar_title or pipe_result))))
+            showscale=True, colorbar=dict(title=colorbar_title or pipe_result,
+                                          y=0.88, yanchor="top", len=0.75))))
 
 
 def _add_components(fig, net, geo):
